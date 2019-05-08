@@ -22,6 +22,22 @@ from collections import defaultdict
 from swift import gettext_ as _
 from random import shuffle
 from time import time
+#==============Nachiket===============
+from hashlib import md5
+
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+
+file_dir = os.path.dirname("/home/osbash/upload_file/")
+with open(os.path.join(file_dir, "private_key_swift.pem"), "rb") as key_file:
+    swift_private_key = serialization.load_pem_private_key(
+        key_file.read(),
+        password=None,
+        backend=default_backend()
+    )
+#==============Nachiket===============
 import functools
 import sys
 
@@ -175,6 +191,7 @@ class Application(object):
             self.logger = get_logger(conf, log_route='proxy-server')
         else:
             self.logger = logger
+
         self._override_options = self._load_per_policy_config(conf)
         self.sorts_by_timing = any(pc.sorting_method == 'timing'
                                    for pc in self._override_options.values())
@@ -436,6 +453,7 @@ class Application(object):
                 self.memcache = cache_from_env(env, True)
             req = self.update_request(Request(env))
             return self.handle_request(req)(env, start_response)
+
         except UnicodeError:
             err = HTTPPreconditionFailed(
                 request=req, body='Invalid UTF8 or contains NULL')
@@ -519,6 +537,7 @@ class Application(object):
                 # controller's method indicates it'd like to gather more
                 # information and try again later.
                 resp = req.environ['swift.authorize'](req)
+
                 if not resp:
                     # No resp means authorized, no delayed recheck required.
                     old_authorize = req.environ['swift.authorize']
@@ -534,7 +553,21 @@ class Application(object):
             try:
                 if old_authorize:
                     req.environ.pop('swift.authorize', None)
-                return handler(req)
+
+                #=====================Nachiket========================
+                resp = handler(req)
+                sto_proof = {}
+                sto_proof['etag'] = resp.headers['Etag']
+                sto_proof['x-timestamp'] = resp.headers['Last-Modified']
+		resp.headers['sto-proof-sign'] = swift_private_key.sign(
+                                               str(sto_proof),
+                                               ec.ECDSA(hashes.SHA256())).encode('hex')
+
+                return resp
+                
+                #return handler(req)
+                #=====================Nachiket========================
+
             finally:
                 if old_authorize:
                     req.environ['swift.authorize'] = old_authorize

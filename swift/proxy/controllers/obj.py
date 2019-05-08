@@ -74,6 +74,22 @@ from swift.common.swob import HTTPAccepted, HTTPBadRequest, HTTPNotFound, \
 from swift.common.request_helpers import update_etag_is_at_header, \
     resolve_etag_is_at_header
 
+#======================Nachiket==========================
+import os
+
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+
+file_dir = os.path.dirname("/home/osbash/upload_file/")
+with open(os.path.join(file_dir, "public_key_client.pem"), "rb") as key_file:
+    client_public_key = serialization.load_pem_public_key(
+        key_file.read(),
+        backend=default_backend()
+    )
+#======================Nachiket==========================
 
 def check_content_type(req):
     if not req.environ.get('swift.content_type_overridden') and \
@@ -803,6 +819,7 @@ class BaseObjectController(Controller):
         # send object to storage nodes
         resp = self._store_object(
             req, data_source, nodes, partition, outgoing_headers)
+
         return resp
 
     @public
@@ -895,9 +912,20 @@ class ReplicatedObjectController(BaseObjectController):
 
         This method was added in the PUT method extraction change
         """
+
+        #====================Nachiket===========================
+        file_hash = md5()
+        content_hash = md5()
+        #====================Nachiket===========================
+
         bytes_transferred = 0
 
         def send_chunk(chunk):
+
+            #====================Nachiket===========================
+            content_hash.update(chunk)
+            #====================Nachiket===========================
+
             for putter in list(putters):
                 if not putter.failed:
                     putter.send_chunk(chunk)
@@ -935,6 +963,38 @@ class ReplicatedObjectController(BaseObjectController):
                         _('Client disconnected without sending enough data'))
                     self.app.logger.increment('client_disconnects')
                     raise HTTPClientDisconnect(request=req)
+
+                #===================Nachiket====================
+                send_chunk(b'') #flush out any buffered data
+
+                cont_sign = {} 
+                computed_cont_hash = (content_hash.hexdigest()
+                                      if content_hash else None)
+                cont_sign[u'content_hash'] = computed_cont_hash
+                cont_sign[u'timestamp'] = unicode(req.headers['x-object-meta-mtime'])
+
+                received_cont_sign = req.headers['Content-Sign'].decode('hex')
+
+                try:
+                    client_public_key.verify(received_cont_sign,
+                        str(cont_sign), ec.ECDSA(hashes.SHA256()))
+                except InvalidSignature: 
+                    raise HTTPUnprocessableEntity(request=req)
+
+                file_sign = {}
+                file_split = req.environ['PATH_INFO'].split('/')
+                computed_file_hash = md5(file_split[len(file_split) - 1]).hexdigest()
+                file_sign[u'file_hash'] = computed_file_hash
+                file_sign[u'timestamp'] = unicode(req.headers['x-object-meta-mtime'])
+
+                received_file_sign = req.headers['File-Sign'].decode('hex')
+
+                try:
+                    client_public_key.verify(received_file_sign,
+                        str(file_sign), ec.ECDSA(hashes.SHA256()))
+                except InvalidSignature: 
+                    raise HTTPUnprocessableEntity(request=req)
+                #===================Nachiket====================
 
                 trail_md = self._get_footers(req)
                 for putter in putters:
@@ -1017,6 +1077,7 @@ class ReplicatedObjectController(BaseObjectController):
                                   _('Object PUT'), etag=etag)
         resp.last_modified = math.ceil(
             float(Timestamp(req.headers['X-Timestamp'])))
+
         return resp
 
 
